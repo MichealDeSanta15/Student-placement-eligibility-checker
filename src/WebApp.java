@@ -36,6 +36,7 @@ public class WebApp {
             server.createContext("/addCompany", WebApp::addCompany);
             server.createContext("/export", WebApp::export);
             server.createContext("/style.css", WebApp::style);
+            server.createContext("/script.js", WebApp::script);
             server.start();
 
             System.out.println("Loaded " + count + " students from data/students.csv");
@@ -59,7 +60,11 @@ public class WebApp {
         String message = "";
         String msg = query.get("msg");
         if (msg != null) {
-            message = "<p class=\"msg\">" + escape(msg) + "</p>";
+            String style = "msg";
+            if (msg.startsWith("Could not") || msg.contains("already exists")) {
+                style = "msg error";
+            }
+            message = "<div class=\"" + style + "\">" + escape(msg) + "</div>";
         }
 
         ArrayList<Student> students = manager.getAllStudents();
@@ -68,8 +73,9 @@ public class WebApp {
         StringBuilder studentRows = new StringBuilder();
         for (Student s : students) {
             studentRows.append("<tr><td>" + escape(s.getRollNo()) + "</td><td>" + escape(s.getName())
-                    + "</td><td>" + escape(s.getBranch()) + "</td><td>" + s.getCgpa()
-                    + "</td><td>" + s.getBacklogs() + "</td></tr>\n");
+                    + "</td><td>" + escape(s.getBranch()) + "</td><td class=\"cgpa\">"
+                    + s.getCgpa() + "</td><td class=\"num\">" + backlogPill(s.getBacklogs())
+                    + "</td></tr>\n");
         }
         if (students.isEmpty()) {
             studentRows.append("<tr><td colspan=\"5\">No students yet.</td></tr>\n");
@@ -77,8 +83,10 @@ public class WebApp {
 
         StringBuilder companyRows = new StringBuilder();
         for (Company c : companies) {
-            companyRows.append("<tr><td>" + escape(c.getName()) + "</td><td>" + c.getMinCgpa()
-                    + "</td><td>" + c.getMaxBacklogs() + "</td><td>" + countEligible(c) + "</td></tr>\n");
+            companyRows.append("<tr><td>" + escape(c.getName()) + "</td><td class=\"num\">"
+                    + c.getMinCgpa() + "</td><td class=\"num\">" + c.getMaxBacklogs()
+                    + "</td><td class=\"num\"><span class=\"count\">" + countEligible(c)
+                    + "</span></td></tr>\n");
         }
         if (companies.isEmpty()) {
             companyRows.append("<tr><td colspan=\"4\">No companies yet.</td></tr>\n");
@@ -99,37 +107,45 @@ public class WebApp {
         StringBuilder rankRows = new StringBuilder();
         int rank = 1;
         for (Student s : manager.getRankedStudents()) {
-            rankRows.append("<tr><td>" + rank + "</td><td>" + escape(s.getRollNo()) + "</td><td>"
-                    + escape(s.getName()) + "</td><td>" + s.getCgpa() + "</td><td>"
-                    + s.getBacklogs() + "</td></tr>\n");
+            rankRows.append("<tr><td class=\"num\">" + rank + "</td><td>" + escape(s.getRollNo())
+                    + "</td><td>" + escape(s.getName()) + "</td><td class=\"cgpa\">"
+                    + s.getCgpa() + "</td><td class=\"num\">" + s.getBacklogs() + "</td></tr>\n");
             rank++;
         }
 
         StringBuilder eligibleBlocks = new StringBuilder();
         for (Company c : companies) {
-            eligibleBlocks.append("<h3>" + escape(c.getName()) + " (Minimum CGPA: " + c.getMinCgpa()
-                    + ", Maximum Backlogs: " + c.getMaxBacklogs() + ")</h3>\n");
+            eligibleBlocks.append("<div class=\"company-block\">\n");
+            eligibleBlocks.append("<div class=\"company-head\">\n");
+            eligibleBlocks.append("<span class=\"company-name\">" + escape(c.getName()) + "</span>\n");
+            eligibleBlocks.append("<span class=\"company-rule\">Minimum CGPA " + c.getMinCgpa()
+                    + " &middot; Maximum Backlogs " + c.getMaxBacklogs() + "</span>\n");
+            eligibleBlocks.append("</div>\n");
             ArrayList<Student> eligible = getEligible(c.getName());
             if (eligible.isEmpty()) {
-                eligibleBlocks.append("<p>No eligible students.</p>\n");
+                eligibleBlocks.append("<p class=\"empty\">No eligible students.</p>\n");
             } else {
-                eligibleBlocks.append("<ul>\n");
+                eligibleBlocks.append("<ul class=\"chips\">\n");
                 for (Student s : eligible) {
-                    eligibleBlocks.append("<li>" + escape(s.getRollNo()) + " - " + escape(s.getName())
-                            + " - CGPA " + s.getCgpa() + "</li>\n");
+                    eligibleBlocks.append("<li class=\"chip\">" + escape(s.getName())
+                            + " <strong>" + s.getCgpa() + "</strong></li>\n");
                 }
                 eligibleBlocks.append("</ul>\n");
             }
+            eligibleBlocks.append("</div>\n");
         }
 
         page = page.replace("{{MESSAGE}}", message);
         page = page.replace("{{STUDENT_ROWS}}", studentRows.toString());
         page = page.replace("{{STUDENT_COUNT}}", String.valueOf(students.size()));
+        page = page.replace("{{COMPANY_COUNT}}", String.valueOf(companies.size()));
         page = page.replace("{{COMPANY_ROWS}}", companyRows.toString());
         page = page.replace("{{STUDENT_OPTIONS}}", studentOptions.toString());
         page = page.replace("{{COMPANY_OPTIONS}}", companyOptions.toString());
         page = page.replace("{{RANK_ROWS}}", rankRows.toString());
         page = page.replace("{{ELIGIBLE_BLOCKS}}", eligibleBlocks.toString());
+        page = page.replace("{{TOP_CGPA}}", String.valueOf(topCgpa(students)));
+        page = page.replace("{{NO_BACKLOG}}", String.valueOf(countNoBacklog(students)));
 
         sendHtml(ex, page);
     }
@@ -209,31 +225,76 @@ public class WebApp {
     }
 
     private static void export(HttpExchange ex) throws IOException {
-        String message;
+        String report;
         try {
-            manager.exportReport("report.txt");
-            message = "Report written to report.txt";
-        } catch (IOException e) {
-            message = "Could not write report.txt";
+            report = manager.buildReport();
+        } catch (RuntimeException e) {
+            sendText(ex, "Could not build the report: " + e.getMessage());
+            return;
         }
-        redirect(ex, "/?msg=" + URLEncoder.encode(message, StandardCharsets.UTF_8));
+        byte[] bytes = report.getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", "text/plain; charset=UTF-8");
+        ex.getResponseHeaders().set("Content-Disposition",
+                "attachment; filename=\"placement_report.txt\"");
+        ex.sendResponseHeaders(200, bytes.length);
+        OutputStream os = ex.getResponseBody();
+        os.write(bytes);
+        os.close();
     }
 
     private static void style(HttpExchange ex) throws IOException {
+        sendFile(ex, "style.css", "text/css; charset=UTF-8");
+    }
+
+    private static void script(HttpExchange ex) throws IOException {
+        sendFile(ex, "script.js", "application/javascript; charset=UTF-8");
+    }
+
+    private static void sendFile(HttpExchange ex, String fileName, String type) throws IOException {
         try {
-            byte[] bytes = Files.readAllBytes(Path.of("web", "style.css"));
-            ex.getResponseHeaders().set("Content-Type", "text/css; charset=UTF-8");
+            byte[] bytes = Files.readAllBytes(Path.of("web", fileName));
+            ex.getResponseHeaders().set("Content-Type", type);
             ex.sendResponseHeaders(200, bytes.length);
             OutputStream os = ex.getResponseBody();
             os.write(bytes);
             os.close();
         } catch (IOException e) {
-            sendText(ex, "web/style.css was not found.");
+            sendText(ex, "web/" + fileName + " was not found.");
         }
     }
 
     private static String readPage(String fileName) throws IOException {
         return Files.readString(Path.of("web", fileName), StandardCharsets.UTF_8);
+    }
+
+    private static String backlogPill(int backlogs) {
+        if (backlogs == 0) {
+            return "<span class=\"pill good\">0</span>";
+        }
+        if (backlogs <= 2) {
+            return "<span class=\"pill warn\">" + backlogs + "</span>";
+        }
+        return "<span class=\"pill bad\">" + backlogs + "</span>";
+    }
+
+    private static double topCgpa(ArrayList<Student> students) {
+        double top = 0.0;
+        for (Student s : students) {
+            if (s.getCgpa() > top) {
+                top = s.getCgpa();
+            }
+        }
+        return top;
+    }
+
+    private static int countNoBacklog(ArrayList<Student> students) {
+        int count = 0;
+        for (Student s : students) {
+            if (s.getBacklogs() == 0) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static int countEligible(Company company) {

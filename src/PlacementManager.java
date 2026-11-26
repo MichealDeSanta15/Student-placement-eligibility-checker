@@ -91,42 +91,46 @@ public class PlacementManager {
         return ranked;
     }
 
+    public String buildReport() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("STUDENT PLACEMENT REPORT\n");
+        sb.append("Total Students: " + students.size() + "\n");
+        sb.append("Total Companies: " + companies.size() + "\n");
+        sb.append("\nRANKED STUDENT LIST\n");
+        sb.append(String.format("%-6s %-12s %-20s %-10s %-8s %-8s%n",
+                "Rank", "Roll No", "Name", "Branch", "CGPA", "Backlogs"));
+
+        ArrayList<Student> ranked = getRankedStudents();
+        Iterator<Student> it = ranked.iterator();
+        int rank = 1;
+        while (it.hasNext()) {
+            Student s = it.next();
+            sb.append(String.format("%-6d %-12s %-20s %-10s %-8.2f %-8d%n",
+                    rank, s.getRollNo(), s.getName(), s.getBranch(),
+                    s.getCgpa(), s.getBacklogs()));
+            rank++;
+        }
+
+        sb.append("\nCOMPANY WISE ELIGIBLE STUDENTS\n");
+        for (Company company : getAllCompanies()) {
+            sb.append("\nCompany: " + company.getName());
+            sb.append(" (Minimum CGPA: " + company.getMinCgpa());
+            sb.append(", Maximum Backlogs: " + company.getMaxBacklogs() + ")\n");
+            ArrayList<Student> eligible = filterEligible(company);
+            sb.append("Eligible Count: " + eligible.size() + "\n");
+            for (Student s : eligible) {
+                sb.append("  " + s.getRollNo() + "  " + s.getName()
+                        + "  CGPA: " + s.getCgpa()
+                        + "  Backlogs: " + s.getBacklogs() + "\n");
+            }
+        }
+        return sb.toString();
+    }
+
     public void exportReport(String fileName) throws IOException {
         FileWriter writer = new FileWriter(fileName);
         try {
-            StringBuilder sb = new StringBuilder();
-            sb.append("STUDENT PLACEMENT REPORT\n");
-            sb.append("Total Students: " + students.size() + "\n");
-            sb.append("Total Companies: " + companies.size() + "\n");
-            sb.append("\nRANKED STUDENT LIST\n");
-            sb.append(String.format("%-6s %-12s %-20s %-10s %-8s %-8s%n",
-                    "Rank", "Roll No", "Name", "Branch", "CGPA", "Backlogs"));
-
-            ArrayList<Student> ranked = getRankedStudents();
-            Iterator<Student> it = ranked.iterator();
-            int rank = 1;
-            while (it.hasNext()) {
-                Student s = it.next();
-                sb.append(String.format("%-6d %-12s %-20s %-10s %-8.2f %-8d%n",
-                        rank, s.getRollNo(), s.getName(), s.getBranch(),
-                        s.getCgpa(), s.getBacklogs()));
-                rank++;
-            }
-
-            sb.append("\nCOMPANY WISE ELIGIBLE STUDENTS\n");
-            for (Company company : getAllCompanies()) {
-                sb.append("\nCompany: " + company.getName());
-                sb.append(" (Minimum CGPA: " + company.getMinCgpa());
-                sb.append(", Maximum Backlogs: " + company.getMaxBacklogs() + ")\n");
-                ArrayList<Student> eligible = filterEligible(company);
-                sb.append("Eligible Count: " + eligible.size() + "\n");
-                for (Student s : eligible) {
-                    sb.append("  " + s.getRollNo() + "  " + s.getName()
-                            + "  CGPA: " + s.getCgpa()
-                            + "  Backlogs: " + s.getBacklogs() + "\n");
-                }
-            }
-            writer.write(sb.toString());
+            writer.write(buildReport());
         } finally {
             writer.close();
         }
